@@ -36,7 +36,7 @@ jobs:
       - name: Install yarn modules
         run: |
           yarn global add eslint eslint
-          yarn eslint --init
+          eslint --init
      
       - name: Install ESLint
         run: |
