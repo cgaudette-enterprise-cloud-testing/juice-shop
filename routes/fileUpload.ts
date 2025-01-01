@@ -1,39 +1,29 @@
 /*
- * Copyright (c) 2014-2022 Bjoern Kimminich & the OWASP Juice Shop contributors.
+ * Copyright (c) 2014-2024 Bjoern Kimminich & the OWASP Juice Shop contributors.
  * SPDX-License-Identifier: MIT
  */
 
+import os from 'os'
 import fs = require('fs')
-import { Request, Response, NextFunction } from 'express'
 import challengeUtils = require('../lib/challengeUtils')
+import { type NextFunction, type Request, type Response } from 'express'
+import path from 'path'
+import * as utils from '../lib/utils'
+import { challenges } from '../data/datacache'
 
-const utils = require('../lib/utils')
-const challenges = require('../data/datacache').challenges
-const libxml = require('libxmljs2')
-const os = require('os')
+const libxml = require('libxmljs')
 const vm = require('vm')
 const unzipper = require('unzipper')
-const path = require('path')
-
-function matchesSystemIniFile (text: string) {
-  const match = text.match(/(; for 16-bit app support|drivers|mci|driver32|386enh|keyboard|boot|display)/gi)
-  return match && match.length >= 2
-}
-
-function matchesEtcPasswdFile (text: string) {
-  const match = text.match(/\w*:\w*:\d*:\d*:\w*:.*/gi)
-  return match && match.length >= 2
-}
 
 function ensureFileIsPassed ({ file }: Request, res: Response, next: NextFunction) {
-  if (file) {
+  if (file != null) {
     next()
   }
 }
 
 function handleZipFileUpload ({ file }: Request, res: Response, next: NextFunction) {
   if (utils.endsWith(file?.originalname.toLowerCase(), '.zip')) {
-    if (file?.buffer && !utils.disableOnContainerEnv()) {
+    if (((file?.buffer) != null) && utils.isChallengeEnabled(challenges.fileWriteChallenge)) {
       const buffer = file.buffer
       const filename = file.originalname.toLowerCase()
       const tempFile = path.join(os.tmpdir(), filename)
@@ -65,7 +55,7 @@ function handleZipFileUpload ({ file }: Request, res: Response, next: NextFuncti
 }
 
 function checkUploadSize ({ file }: Request, res: Response, next: NextFunction) {
-  if (file) {
+  if (file != null) {
     challengeUtils.solveIf(challenges.uploadSizeChallenge, () => { return file?.size > 100000 })
   }
   next()
@@ -82,14 +72,14 @@ function checkFileType ({ file }: Request, res: Response, next: NextFunction) {
 function handleXmlUpload ({ file }: Request, res: Response, next: NextFunction) {
   if (utils.endsWith(file?.originalname.toLowerCase(), '.xml')) {
     challengeUtils.solveIf(challenges.deprecatedInterfaceChallenge, () => { return true })
-    if (file?.buffer && !utils.disableOnContainerEnv()) { // XXE attacks in Docker/Heroku containers regularly cause "segfault" crashes
+    if (((file?.buffer) != null) && utils.isChallengeEnabled(challenges.deprecatedInterfaceChallenge)) { // XXE attacks in Docker/Heroku containers regularly cause "segfault" crashes
       const data = file.buffer.toString()
       try {
         const sandbox = { libxml, data }
         vm.createContext(sandbox)
         const xmlDoc = vm.runInContext('libxml.parseXml(data, { noblanks: true, noent: true, nocdata: true })', sandbox, { timeout: 2000 })
         const xmlString = xmlDoc.toString(false)
-        challengeUtils.solveIf(challenges.xxeFileDisclosureChallenge, () => { return (matchesSystemIniFile(xmlString) ?? matchesEtcPasswdFile(xmlString)) })
+        challengeUtils.solveIf(challenges.xxeFileDisclosureChallenge, () => { return (utils.matchesEtcPasswdFile(xmlString) || utils.matchesSystemIniFile(xmlString)) })
         res.status(410)
         next(new Error('B2B customer complaints via file upload have been deprecated for security reasons: ' + utils.trunc(xmlString, 400) + ' (' + file.originalname + ')'))
       } catch (err: any) { // TODO: Remove any
